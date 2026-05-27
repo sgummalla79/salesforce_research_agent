@@ -1,0 +1,33 @@
+[package]
+name = "pragna-desktop"
+version = "0.1.0"
+description = "Pragna — multi-agent AI orchestration desktop app"
+authors = []
+license = ""
+repository = ""
+edition = "2021"
+
+# NOTE: Build script is required by Tauri to generate platform-specific code.
+[build-dependencies]
+tauri-build = { version = "2", features = [] }
+
+[dependencies]
+tauri          = { version = "2",     features = ["protocol-asset"] }
+tauri-plugin-shell     = "2"
+tauri-plugin-store     = "2"
+tauri-plugin-deep-link = "2"
+
+# Structured logging — tracing crate integrates with tauri's log system
+tracing            = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+
+serde      = { version = "1", features = ["derive"] }
+serde_json = "1"
+
+[profile.release]
+# Optimise binary size for distribution
+panic   = "abort"
+codegen-units = 1
+lto     = true
+opt-level = "s"
+strip   = true
