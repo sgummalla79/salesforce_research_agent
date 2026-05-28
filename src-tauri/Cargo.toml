@@ -8,6 +8,10 @@ repository = ""
 edition = "2021"
 
 # NOTE: Build script is required by Tauri to generate platform-specific code.
+[lib]
+name = "pragna_desktop_lib"
+crate-type = ["staticlib", "cdylib", "rlib"]
+
 [build-dependencies]
 tauri-build = { version = "2", features = [] }
 
