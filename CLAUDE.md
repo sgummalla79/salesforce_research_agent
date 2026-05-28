@@ -228,26 +228,91 @@ The Auth0 application must have `pragna://auth/callback` registered as an **Allo
 
 ---
 
-## New Machine Setup
+## Running the App
 
-Memory files are stored in `.claude/memory/` in this repo so context travels with the code.
+### Prerequisites
 
-On a new machine, after cloning, copy them to the Claude Code memory directory:
+**macOS**
+```bash
+# 1. Xcode Command Line Tools
+xcode-select --install
+
+# 2. Rust toolchain
+curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh
+source "$HOME/.cargo/env"
+
+# 3. pnpm (if not already installed)
+npm install -g pnpm
+```
+
+**Windows**
+```powershell
+# 1. Install Visual Studio C++ build tools (required by Rust)
+#    Download: https://visualstudio.microsoft.com/visual-cpp-build-tools/
+#    Select: "Desktop development with C++"
+
+# 2. Rust toolchain
+winget install Rustlang.Rust.MSVC
+
+# 3. WebView2 — already bundled on Windows 11, no action needed
+
+# 4. pnpm (if not already installed)
+npm install -g pnpm
+```
+
+### First-time setup
+
+```bash
+# 1. Clone the repo
+git clone https://github.com/sgummalla79/salesforce_research_agent.git
+cd salesforce_research_agent
+
+# 2. Create your local env file and fill in real Auth0 values
+cp .env.example .env.local
+# Edit .env.local — set VITE_AUTH0_DOMAIN, VITE_AUTH0_CLIENT_ID, VITE_AUTH0_AUDIENCE
+
+# 3. Install JS dependencies
+pnpm install
+
+# 4. Run in dev mode (opens the desktop app with Vite HMR)
+pnpm tauri:dev
+```
+
+> **Note:** `pnpm tauri:dev` compiles the Rust backend on first run — this takes 2–3 minutes. Subsequent runs are fast.
+
+### Production build
+
+```bash
+pnpm tauri:build
+# Output: src-tauri/target/release/bundle/
+```
+
+---
+
+## New Machine Setup (Claude Code memory)
+
+Memory files are stored in `.claude/memory/` in this repo so Claude Code context travels with the code.
+
+After cloning, run the script for your OS to copy them to the Claude Code memory directory:
 
 **macOS / Linux:**
 ```bash
+# Run from the repo root
 PROJ=$(pwd)
-DEST="$HOME/.claude/projects/$(echo $PROJ | sed 's|/|-|g; s|^-||')/memory"
+DEST="$HOME/.claude/projects/$(echo "$PROJ" | sed -e 's|/|-|g' -e 's|^-||')/memory"
 mkdir -p "$DEST"
 cp .claude/memory/* "$DEST/"
+echo "Memory copied to: $DEST"
 ```
 
 **Windows (PowerShell):**
 ```powershell
+# Run from the repo root
 $proj = (Get-Location).Path -replace '[:\\]', '-' -replace '^-', ''
 $dest = "$env:USERPROFILE\.claude\projects\$proj\memory"
 New-Item -ItemType Directory -Force -Path $dest | Out-Null
 Copy-Item .claude\memory\* $dest
+Write-Host "Memory copied to: $dest"
 ```
 
 After copying, open the project in Claude Code — it will load the memory automatically.
