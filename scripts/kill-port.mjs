@@ -1,11 +1,13 @@
 /**
  * kill-port.mjs
  *
- * Kills whatever process is listening on the dev port before Vite starts.
+ * Kills whatever process is listening on the dev port before Vite starts,
+ * then waits until the port is confirmed free before exiting.
+ *
  * Port is read from VITE_DEV_PORT in .env.local → .env → fallback 3000.
  *
- * Works on Windows (netstat + taskkill) and macOS/Linux (lsof + kill).
- * Called automatically by the "predev" and "pretauri:dev" npm scripts.
+ * Windows: uses PowerShell Get-NetTCPConnection (more reliable than netstat).
+ * macOS/Linux: uses lsof + kill -9.
  */
 
 import { execSync, spawnSync } from 'child_process';
@@ -33,32 +35,54 @@ function parseEnvFile(filePath) {
   return result;
 }
 
-// Resolve port: .env.local wins over .env, both win over default
+/** Returns true if something is still listening on the port. */
+function isPortInUse(port) {
+  try {
+    if (process.platform === 'win32') {
+      const out = execSync(
+        `PowerShell -NoProfile -Command "Get-NetTCPConnection -LocalPort ${port} -State Listen -ErrorAction SilentlyContinue | Measure-Object | Select-Object -ExpandProperty Count"`,
+        { encoding: 'utf8', stdio: ['pipe', 'pipe', 'ignore'] },
+      ).trim();
+      return parseInt(out, 10) > 0;
+    } else {
+      const out = execSync(`lsof -ti tcp:${port} 2>/dev/null`, { encoding: 'utf8' }).trim();
+      return out.length > 0;
+    }
+  } catch {
+    return false;
+  }
+}
+
+/** Sleep for ms milliseconds. */
+function sleep(ms) {
+  return new Promise((r) => setTimeout(r, ms));
+}
+
+// ── Resolve port ──────────────────────────────────────────────────────────────
 const envLocal = parseEnvFile(resolve(ROOT, '.env.local'));
 const envBase  = parseEnvFile(resolve(ROOT, '.env'));
-const port = parseInt(
-  envLocal.VITE_DEV_PORT ?? envBase.VITE_DEV_PORT ?? '3000',
-  10,
-);
+const port     = parseInt(envLocal.VITE_DEV_PORT ?? envBase.VITE_DEV_PORT ?? '3000', 10);
 
 console.log(`[kill-port] Checking port ${port}…`);
 
-const isWindows = process.platform === 'win32';
+if (!isPortInUse(port)) {
+  console.log(`[kill-port] Port ${port} is free.`);
+  process.exit(0);
+}
 
+// ── Kill the process holding the port ────────────────────────────────────────
 try {
-  if (isWindows) {
-    // netstat lists: Proto  Local Address  Foreign Address  State  PID
-    const output = execSync(`netstat -ano | findstr :${port}`, { encoding: 'utf8' });
-    const pids = new Set();
-    for (const line of output.split('\n')) {
-      // Match only lines where the local address ends with :<port>
-      if (!new RegExp(`:${port}\\s`).test(line)) continue;
-      const parts = line.trim().split(/\s+/);
-      const pid = parts[parts.length - 1];
-      if (pid && pid !== '0') pids.add(pid);
-    }
-    if (pids.size === 0) {
-      console.log(`[kill-port] Port ${port} is free.`);
+  if (process.platform === 'win32') {
+    // Use PowerShell to find the owning PID — much more reliable than netstat parsing
+    const pidsRaw = execSync(
+      `PowerShell -NoProfile -Command "Get-NetTCPConnection -LocalPort ${port} -State Listen -ErrorAction SilentlyContinue | Select-Object -ExpandProperty OwningProcess"`,
+      { encoding: 'utf8', stdio: ['pipe', 'pipe', 'ignore'] },
+    ).trim();
+
+    const pids = [...new Set(pidsRaw.split(/\r?\n/).map((s) => s.trim()).filter(Boolean))];
+
+    if (pids.length === 0) {
+      console.log(`[kill-port] No process found on port ${port}.`);
     } else {
       for (const pid of pids) {
         console.log(`[kill-port] Killing PID ${pid} on port ${port}…`);
@@ -66,18 +90,30 @@ try {
       }
     }
   } else {
-    // macOS / Linux: lsof lists PID in column 2
-    const output = execSync(`lsof -ti tcp:${port}`, { encoding: 'utf8' }).trim();
-    if (!output) {
-      console.log(`[kill-port] Port ${port} is free.`);
-    } else {
-      for (const pid of output.split('\n').filter(Boolean)) {
-        console.log(`[kill-port] Killing PID ${pid} on port ${port}…`);
-        spawnSync('kill', ['-9', pid], { stdio: 'inherit' });
-      }
+    const pidsRaw = execSync(`lsof -ti tcp:${port}`, { encoding: 'utf8' }).trim();
+    const pids = [...new Set(pidsRaw.split(/\n/).filter(Boolean))];
+    for (const pid of pids) {
+      console.log(`[kill-port] Killing PID ${pid} on port ${port}…`);
+      spawnSync('kill', ['-9', pid], { stdio: 'inherit' });
     }
   }
 } catch {
-  // findstr / lsof exit non-zero when nothing is found — that's fine
-  console.log(`[kill-port] Port ${port} is free.`);
+  // lsof/PowerShell exits non-zero when nothing found — that is fine
 }
+
+// ── Wait for OS to release the port (up to 3 seconds) ────────────────────────
+const MAX_WAIT_MS = 3000;
+const POLL_MS     = 200;
+let waited = 0;
+
+await (async () => {
+  while (waited < MAX_WAIT_MS) {
+    await sleep(POLL_MS);
+    waited += POLL_MS;
+    if (!isPortInUse(port)) {
+      console.log(`[kill-port] Port ${port} is now free (waited ${waited}ms).`);
+      return;
+    }
+  }
+  console.warn(`[kill-port] Warning: port ${port} may still be in use after ${MAX_WAIT_MS}ms.`);
+})();
