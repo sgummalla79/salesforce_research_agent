@@ -1,13 +1,14 @@
 /**
  * kill-port.mjs
  *
- * Kills whatever process is listening on the dev port before Vite starts,
- * then waits until the port is confirmed free before exiting.
+ * Kills whatever process is listening on the dev port, then waits until
+ * the OS confirms the port is free before exiting. Safe to call multiple
+ * times in quick succession (Tauri restart scenario).
  *
  * Port is read from VITE_DEV_PORT in .env.local → .env → fallback 3000.
  *
- * Windows: uses PowerShell Get-NetTCPConnection (more reliable than netstat).
- * macOS/Linux: uses lsof + kill -9.
+ * Windows : PowerShell Get-NetTCPConnection (reliable PID lookup).
+ * macOS/Linux: lsof + kill -9.
  */
 
 import { execSync, spawnSync } from 'child_process';
@@ -18,7 +19,6 @@ import { fileURLToPath } from 'url';
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const ROOT = resolve(__dirname, '..');
 
-/** Reads KEY=VALUE lines from a .env file, ignoring comments. */
 function parseEnvFile(filePath) {
   if (!existsSync(filePath)) return {};
   const lines = readFileSync(filePath, 'utf8').split('\n');
@@ -28,14 +28,12 @@ function parseEnvFile(filePath) {
     if (!trimmed || trimmed.startsWith('#')) continue;
     const eq = trimmed.indexOf('=');
     if (eq === -1) continue;
-    const key = trimmed.slice(0, eq).trim();
-    const val = trimmed.slice(eq + 1).trim().replace(/^['"]|['"]$/g, '');
-    result[key] = val;
+    result[trimmed.slice(0, eq).trim()] = trimmed.slice(eq + 1).trim().replace(/^['"]|['"]$/g, '');
   }
   return result;
 }
 
-/** Returns true if something is still listening on the port. */
+/** Returns true if something is actively listening on the port. */
 function isPortInUse(port) {
   try {
     if (process.platform === 'win32') {
@@ -53,7 +51,6 @@ function isPortInUse(port) {
   }
 }
 
-/** Sleep for ms milliseconds. */
 function sleep(ms) {
   return new Promise((r) => setTimeout(r, ms));
 }
@@ -65,55 +62,48 @@ const port     = parseInt(envLocal.VITE_DEV_PORT ?? envBase.VITE_DEV_PORT ?? '30
 
 console.log(`[kill-port] Checking port ${port}…`);
 
-if (!isPortInUse(port)) {
-  console.log(`[kill-port] Port ${port} is free.`);
-  process.exit(0);
-}
-
-// ── Kill the process holding the port ────────────────────────────────────────
-try {
-  if (process.platform === 'win32') {
-    // Use PowerShell to find the owning PID — much more reliable than netstat parsing
-    const pidsRaw = execSync(
-      `PowerShell -NoProfile -Command "Get-NetTCPConnection -LocalPort ${port} -State Listen -ErrorAction SilentlyContinue | Select-Object -ExpandProperty OwningProcess"`,
-      { encoding: 'utf8', stdio: ['pipe', 'pipe', 'ignore'] },
-    ).trim();
-
-    const pids = [...new Set(pidsRaw.split(/\r?\n/).map((s) => s.trim()).filter(Boolean))];
-
-    if (pids.length === 0) {
-      console.log(`[kill-port] No process found on port ${port}.`);
-    } else {
+// ── Kill if something is listening ───────────────────────────────────────────
+if (isPortInUse(port)) {
+  try {
+    if (process.platform === 'win32') {
+      const pidsRaw = execSync(
+        `PowerShell -NoProfile -Command "Get-NetTCPConnection -LocalPort ${port} -State Listen -ErrorAction SilentlyContinue | Select-Object -ExpandProperty OwningProcess"`,
+        { encoding: 'utf8', stdio: ['pipe', 'pipe', 'ignore'] },
+      ).trim();
+      const pids = [...new Set(pidsRaw.split(/\r?\n/).map((s) => s.trim()).filter(Boolean))];
       for (const pid of pids) {
         console.log(`[kill-port] Killing PID ${pid} on port ${port}…`);
         spawnSync('taskkill', ['/F', '/PID', pid], { stdio: 'inherit' });
       }
+    } else {
+      const pidsRaw = execSync(`lsof -ti tcp:${port}`, { encoding: 'utf8' }).trim();
+      for (const pid of pidsRaw.split(/\n/).filter(Boolean)) {
+        console.log(`[kill-port] Killing PID ${pid} on port ${port}…`);
+        spawnSync('kill', ['-9', pid], { stdio: 'inherit' });
+      }
     }
-  } else {
-    const pidsRaw = execSync(`lsof -ti tcp:${port}`, { encoding: 'utf8' }).trim();
-    const pids = [...new Set(pidsRaw.split(/\n/).filter(Boolean))];
-    for (const pid of pids) {
-      console.log(`[kill-port] Killing PID ${pid} on port ${port}…`);
-      spawnSync('kill', ['-9', pid], { stdio: 'inherit' });
-    }
-  }
-} catch {
-  // lsof/PowerShell exits non-zero when nothing found — that is fine
+  } catch { /* nothing listening */ }
 }
 
-// ── Wait for OS to release the port (up to 3 seconds) ────────────────────────
-const MAX_WAIT_MS = 3000;
-const POLL_MS     = 200;
+// ── Wait for OS to release the port (covers both kill + Tauri-restart race) ──
+// Poll until free, or up to MAX_WAIT_MS. This handles the case where Tauri
+// has already killed the previous Vite process but the OS hasn't released
+// the port yet by the time this script runs.
+const MAX_WAIT_MS = 5000;
+const POLL_MS     = 150;
 let waited = 0;
 
-await (async () => {
-  while (waited < MAX_WAIT_MS) {
-    await sleep(POLL_MS);
-    waited += POLL_MS;
-    if (!isPortInUse(port)) {
-      console.log(`[kill-port] Port ${port} is now free (waited ${waited}ms).`);
-      return;
-    }
+while (isPortInUse(port)) {
+  if (waited >= MAX_WAIT_MS) {
+    console.warn(`[kill-port] Warning: port ${port} still in use after ${MAX_WAIT_MS}ms — proceeding anyway.`);
+    break;
   }
-  console.warn(`[kill-port] Warning: port ${port} may still be in use after ${MAX_WAIT_MS}ms.`);
-})();
+  await sleep(POLL_MS);
+  waited += POLL_MS;
+}
+
+if (waited > 0) {
+  console.log(`[kill-port] Port ${port} is free (waited ${waited}ms).`);
+} else {
+  console.log(`[kill-port] Port ${port} is free.`);
+}
