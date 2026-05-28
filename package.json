@@ -5,6 +5,7 @@
   "type": "module",
   "scripts": {
     "dev": "node scripts/kill-port.mjs && vite",
+    "dev:vite": "vite",
     "build": "tsc --noEmit && vite build",
     "tauri": "tauri",
     "tauri:dev": "node scripts/kill-port.mjs && tauri dev",
