@@ -20,3 +20,16 @@ target
 #  option (not recommended) you can uncomment the following to ignore the entire idea folder.
 #.idea/
 node_modules
+
+# Build output
+dist/
+
+# Local env — never commit real credentials
+.env.local
+.env.*.local
+
+# Machine-specific Claude Code settings (permissions, local paths)
+.claude/settings.local.json
+
+# pnpm
+.npmrc

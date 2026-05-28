@@ -228,10 +228,36 @@ The Auth0 application must have `pragna://auth/callback` registered as an **Allo
 
 ---
 
+## New Machine Setup
+
+Memory files are stored in `.claude/memory/` in this repo so context travels with the code.
+
+On a new machine, after cloning, copy them to the Claude Code memory directory:
+
+**macOS / Linux:**
+```bash
+PROJ=$(pwd)
+DEST="$HOME/.claude/projects/$(echo $PROJ | sed 's|/|-|g; s|^-||')/memory"
+mkdir -p "$DEST"
+cp .claude/memory/* "$DEST/"
+```
+
+**Windows (PowerShell):**
+```powershell
+$proj = (Get-Location).Path -replace '[:\\]', '-' -replace '^-', ''
+$dest = "$env:USERPROFILE\.claude\projects\$proj\memory"
+New-Item -ItemType Directory -Force -Path $dest | Out-Null
+Copy-Item .claude\memory\* $dest
+```
+
+After copying, open the project in Claude Code — it will load the memory automatically.
+
+---
+
 ## ADR Reference
 
 Architectural Decision Records live in `docs/decisions/`. Create a new ADR file for every significant design choice made during development.
 
-## Migration Reference
+## Feasibility Reference
 
-See `C:\Users\sgummalla\.claude\plans\go-through-each-every-fuzzy-sun.md` for the full feature-by-feature feasibility analysis and LOE breakdown from the original SPA.
+See `.claude/memory/project_pragna_tauri.md` for current project state. The full feature-by-feature LOE analysis is in the local plan file (not committed — ask the original developer for a copy if needed).
