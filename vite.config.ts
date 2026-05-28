@@ -1,4 +1,4 @@
-import { defineConfig } from 'vite';
+import { defineConfig, loadEnv } from 'vite';
 import react from '@vitejs/plugin-react';
 import tailwindcss from '@tailwindcss/vite';
 import svgr from 'vite-plugin-svgr';
@@ -6,7 +6,12 @@ import { tauri } from 'vite-plugin-tauri';
 import { resolve } from 'path';
 
 // https://vitejs.dev/config/
-export default defineConfig(({ command }) => ({
+export default defineConfig(({ command, mode }) => {
+  // Load .env / .env.local so VITE_DEV_PORT is available at config time
+  const env = loadEnv(mode, process.cwd(), '');
+  const port = parseInt(env.VITE_DEV_PORT ?? '3000', 10);
+
+  return {
   plugins: [
     react(),
     tailwindcss(),
@@ -20,9 +25,10 @@ export default defineConfig(({ command }) => ({
     },
   },
 
-  // Vite dev server — Tauri expects a specific port
+  // Vite dev server — port is read from VITE_DEV_PORT (.env.local), default 3000.
+  // tauri.conf.json devUrl must match this port.
   server: {
-    port: 1420,
+    port,
     strictPort: true,
     // NOTE: No proxy here. The app calls VITE_API_BASE_URL directly.
     // For dev, set VITE_API_BASE_URL=http://localhost:8000 in .env.local
@@ -63,4 +69,5 @@ export default defineConfig(({ command }) => ({
       },
     },
   },
-}));
+  };
+});
